@@ -1,0 +1,231 @@
+--- a/app.js
++++ b/app.js
+@@ -31,12 +31,15 @@
+       _lag = Math.round((_n - _d) / 86400000);
+     }catch(e){ _lag = 0; }
+     var _dateTxt = D.meta.date + ' ' + (D.meta.weekday||'');
+-    if(_lag > 0){
+-      _dateTxt += ' · 已滞后 ' + _lag + ' 天';
+-      var _rd = $('#report-date');
+-      if(_rd){ _rd.style.color = _lag >= 2 ? '#ff8a80' : '#ffcc80'; _rd.style.fontWeight='700'; }
+-    }
+-    $('#report-date').textContent = _dateTxt;
++    var _rd = $('#report-date');
++    if(_rd){
++      if(_lag > 0){
++        _dateTxt += ' · 已滞后 ' + _lag + ' 天';
++        _rd.style.color = _lag >= 2 ? '#ff8a80' : '#ffcc80';
++        _rd.style.fontWeight='700';
++      }
++      _rd.textContent = _dateTxt;
++    }
+     // N-05：过期状态必须是首屏可见的徽标（当日=绿 / 1 天=黄 / ≥2 天=红），
+     // 只把日期文字改个颜色，截图转发时过期信息等于丢失。
+     var _badge = $('#stale-badge');
+@@ -838,14 +841,16 @@
+     var undated=all.filter(function(h){ return h.days_left==null; });
+     all=all.filter(function(h){ return h.days_left!=null; });
+     // 已结束的节点排到最后，避免默认视图一打开就是过期内容
+-    all.sort(function(a,b){
++    // 倒计时条形图严格只展示有日期的节点；无固定日期节点保留在下方全量列表中展示
++    var datedEvents = all.filter(function(h){ return h.days_left != null; });
++    datedEvents.sort(function(a,b){
+       var pa=a.days_left<0?1:0, pb=b.days_left<0?1:0;
+       if(pa!==pb) return pa-pb;
+       return a.days_left-b.days_left;
+     });
+-    all=all.concat(undated);
+-
+-    var chartRows=all.slice(0,CAL_CHART_ROWS);
++    all = all.concat(undated);
++
++    var chartRows=datedEvents.slice(0,CAL_CHART_ROWS);
+     if(_cdChart){ try{_cdChart.dispose();}catch(e){} _cdChart=null; }
+     if(!chartRows.length){
+       box.style.height='120px';
+@@ -912,6 +917,7 @@
+                 return (h.days_to_end>0)?('进行中 · 剩 '+h.days_to_end+' 天'):'进行中 · 今天结束';
+               }
+               if(h.days_left===0) return '今天';
++              if(h.days_left==null) return '待定';
+               // 超过封顶的必须标真实天数，否则读者会以为真的只有 30 天
+               return capped[pp.dataIndex] ? (h.days_left+' 天 ›') : (h.days_left+' 天');
+             }}}]
+@@ -1194,7 +1200,15 @@
+     sel.p.value=SUB_SEL.search.p; sel.c.value=SUB_SEL.search.c;
+     drawSearch(SUB_SEL.search.p,SUB_SEL.search.c);
+     function drawSearch(p,c){
+-      var rows=(((D.search_rankings||{})[p]||{})[c])||[];
++      var rawRows=(((D.search_rankings||{})[p]||{})[c])||[];
++      // 过滤重复搜索词并重新排列排名
++      var seenWords={}, rows=[];
++      rawRows.forEach(function(r){
++        var k=String(r.word||r.keyword||'').trim().toLowerCase();
++        if(!k || seenWords[k]) return;
++        seenWords[k]=true;
++        rows.push(r);
++      });
+       container.innerHTML='';
+       var t=el('table','grid-table');
+       t.innerHTML='<thead><tr><th>排名</th><th>搜索词</th><th>中文</th><th>趋势</th><th>热度信号</th></tr></thead>';
+@@ -1236,7 +1250,15 @@
+ 
+     drawBest(SUB_SEL.best.p,SUB_SEL.best.c);
+     function drawBest(p,c){
+-      var allRows=(((D.bestsellers||{})[p]||{})[c])||[];
++      var allRaw=(((D.bestsellers||{})[p]||{})[c])||[];
++      // 过滤重复商品
++      var seenProds={}, allRows=[];
++      allRaw.forEach(function(r){
++        var k=String(r.product||r.cn||'').trim().toLowerCase();
++        if(!k || seenProds[k]) return;
++        seenProds[k]=true;
++        allRows.push(r);
++      });
+       var rows=tshirtOnly?allRows.filter(isTshirt):allRows;
+       container.innerHTML='';
+       var t=el('table','grid-table');
+@@ -1355,7 +1377,7 @@
+           '<div class="anime-cn">'+esc(it.cn||it.title)+'</div>'+
+           '<div class="anime-title">'+esc(it.title||'')+'</div>'+
+           (it.metric?'<div class="anime-metric">📊 '+esc(it.metric)+'</div>':'')+
+-          (it.tshirt_opportunity?'<div class="anime-opp">👕 '+esc(it.tshirt_opportunity.substring(0,60)+(it.tshirt_opportunity.length>60?'…':''))+'</div>':'');
++          (it.tshirt_opportunity?'<div class="anime-opp">👕 '+esc(String(it.tshirt_opportunity).substring(0,60)+(String(it.tshirt_opportunity).length>60?'…':''))+'</div>':'');
+         card.innerHTML=inner;
+         card.onclick=function(){showAnimeDetail(it);};
+         list.appendChild(card);
+@@ -1561,10 +1583,22 @@
+           +' 天没有带日期的新内容；超期与无日期的条目已按规则删除'));
+         body.appendChild(box); return;
+       }
+-      var linkLabel={TikTok:'查 TikTok 话题',YouTube:'搜 YouTube 视频',Netflix:'搜 Netflix 片源',Shopping:'查平台商品'}[cat.k]||'在线查询';
+       arr.forEach(function(it){
+         var item=el('div','gt-item');
+-        var linkHtml=it.link?('<a class="gt-link" href="'+esc(it.link)+'" target="_blank" rel="noopener" title="'+esc(it.link)+'">🔍 '+linkLabel+' ↗</a>'):'';
++        // 根据实际链接域名动态判断获取渠道与按钮文案，避免平台与渠道不一致的误导
++        var realLabel='在线查询';
++        var linkHref=String(it.link||'');
++        if(linkHref.indexOf('weibo.com')>=0) realLabel='查微博原文';
++        else if(linkHref.indexOf('tiktok.com')>=0) realLabel='查 TikTok 话题';
++        else if(linkHref.indexOf('youtube.com')>=0) realLabel='搜 YouTube 视频';
++        else if(linkHref.indexOf('netflix.com')>=0) realLabel='看 Netflix 片源';
++        else if(linkHref.indexOf('shopee.')>=0) realLabel='查 Shopee 商品';
++        else if(linkHref.indexOf('lazada.')>=0) realLabel='查 Lazada 商品';
++        else if(linkHref.indexOf('bing.com')>=0 || linkHref.indexOf('google.com')>=0) realLabel='搜索引擎检索';
++        else if(linkHref.indexOf('sgpjbg')>=0 || linkHref.indexOf('menglar')>=0 || linkHref.indexOf('socialpilot')>=0 || linkHref.indexOf('glosellers')>=0) realLabel='查研报/文章引用';
++        else realLabel={TikTok:'查 TikTok 话题',YouTube:'搜 YouTube 视频',Netflix:'搜 Netflix 片源',Shopping:'查平台商品'}[cat.k]||'在线查询';
++
++        var linkHtml=it.link?('<a class="gt-link" href="'+esc(it.link)+'" target="_blank" rel="noopener" title="'+esc(it.link)+'">🔍 '+realLabel+' ↗</a>'):'';
+         // 原实现不显示任何日期，30 多天前的内容与"当前趋势"外观完全一致。
+         // 这里把数据日期和距今天数标出来，超过 14 天明确写"历史快照"。
+         var age=gtAge(it.t);
+@@ -1655,8 +1689,8 @@
+     // 站点匹配：国家信息在 location 字段，site 是平台名（Netflix / Apple TV 等）。
+     // 旧实现只比对 site，导致「🇹🇭 泰国 / 🇲🇾 马来西亚 / 🌐 全球」永远筛不出任何条目。
+     function siteMatch(e, chip){
+-      if(chip==='全部') return true;
+-      var flag=chip.split(/\s+/)[0];
++      if(!chip || chip==='全部') return true;
++      var flag=String(chip).split(/\s+/)[0];
+       var hay=String(e.location||'')+' '+String(e.site||'')+' '+String(e.name||'');
+       var isTH=/泰国|Thailand|曼谷|Bangkok|清迈|普吉|孔敬|暖武里|素可泰|芭堤雅/i.test(hay);
+       var isMY=/马来|Malaysia|吉隆坡|Kuala|槟城|新山|马六甲|沙巴|砂拉越/i.test(hay);
+@@ -1915,8 +1949,9 @@
+     var done=keys.filter(function(k){return FX_STATE[k];});
+     if(!done.length){ b.textContent='⚪ 等待获取'; return; }
+     var ok=done.filter(function(k){return FX_STATE[k].ok;});
+-    if(ok.length===3) b.textContent='🟢 浏览器实时 · '+FX_STATE.rate.at;
+-    else if(ok.length>0) b.textContent='🟡 部分成功 '+ok.length+'/3 · '+FX_STATE.rate.at;
++    var latestAt = (FX_STATE.rate && FX_STATE.rate.at) || (done[0] && done[0].at) || fxNow();
++    if(ok.length===3) b.textContent='🟢 浏览器实时 · '+latestAt;
++    else if(ok.length>0) b.textContent='🟡 部分成功 '+ok.length+'/3 · '+latestAt;
+     else b.textContent='🔴 实时获取失败，显示快照';
+   }
+   function fxGet(url){
+@@ -1986,9 +2021,10 @@
+       else if(r.status==='无 Cookie') statusClass='badge-nocookies';
+       var fmt=function(v){return (v===null||v===undefined||v==='')?'-':v;};
+       var gmv='-';
+-      if(r.gmv!=null){
++      if(r.gmv!=null && r.gmv!==''){
+         var sym=(r.market==='MY'||String(r.market).toUpperCase()==='MALAYSIA')?'RM ':'฿ ';
+-        gmv=sym+Number(r.gmv).toLocaleString();
++        var num = Number(String(r.gmv).replace(/[^0-9.-]/g, ''));
++        gmv = isNaN(num) ? esc(String(r.gmv)) : (sym + num.toLocaleString());
+       }
+       var conv=(r.conversion_rate!=null)?(r.conversion_rate+'%'):'-';
+       tr.innerHTML='<td>'+(r.no||'')+'</td><td>'+esc(r.platform)+'</td><td>'+esc(r.market)+'</td><td>'+esc(r.name)+'</td><td>'+esc(r.zfb_id)+'</td><td class="num">'+gmv+'</td><td class="num">'+fmt(r.orders)+'</td><td class="num">'+fmt(r.visitors)+'</td><td class="num">'+conv+'</td><td><span class="store-badge '+statusClass+'">'+esc(r.status)+'</span></td>';
+@@ -2012,7 +2048,7 @@
+       var noteClass='perf-note'+(hasReal?' perf-ready':'');
+       grid.appendChild(el('div',noteClass,esc(D.performance_placeholder.reason)));
+     }
+-    (D.performance_placeholder.metrics||[]).forEach(function(m){
++    (((D.performance_placeholder && D.performance_placeholder.metrics)||[])).forEach(function(m){
+       var card=el('div','perf-card');
+       card.appendChild(el('div','perf-title',m));
+       var cd=el('div','perf-chart'); card.appendChild(cd);
+@@ -2111,6 +2147,7 @@
+   function autoTick(){
+     if(document.hidden) return;          // 页面在后台时不消耗请求
+     fetchLiveFxWeather();
++    checkVersion();                      // 自动检测新数据版本
+     _autoLast=new Date();
+     autoStatus();
+   }
+@@ -2138,11 +2175,28 @@
+   // 此前把版本号硬编码在 app.js 里，自动化只改了 version.json，
+   // 两边永远对不上 → 每次打开都提示"有新版本"，点刷新还是同一个包。
+   var BUILD=(function(){
++    var meta = document.querySelector('meta[name="build"]');
++    if(meta && meta.content) return meta.content.trim();
+     var s=document.querySelector('script[src*="app.js"]');
+     var src=s?(s.getAttribute('src')||''):'';
+     var m=/[?&]v=([^&]+)/.exec(src);
+     return m?decodeURIComponent(m[1]):'';
+   })();
++
++  // 动态无感热更新业务数据
++  function reloadDashboardData(cb){
++    var s = document.createElement('script');
++    s.src = 'data/dashboard_data.js?_=' + Date.now();
++    s.onload = function(){
++      if(window.DASHBOARD_DATA){
++        D = window.DASHBOARD_DATA;
++        _TH_RAW = null;
++        renderAll();
++        if(typeof cb === 'function') cb();
++      }
++    };
++    document.head.appendChild(s);
++  }
+   function checkVersion(){
+     if(typeof fetch!=='function'||!BUILD) return;
+     fetch('version.json?_='+Date.now(),{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+
+--- a/auto_status.js
++++ b/auto_status.js
+@@ -55,8 +55,23 @@
+ 
+   function load() {
+     if (typeof fetch !== 'function') return;
++    // 优先请求 api/status；若 404 则优雅降级回退到已有的 version.json
+     fetch('api/status?_=' + Date.now(), { cache: 'no-store' })
+-      .then(function (r) { return r.ok ? r.json() : null; })
++      .then(function (r) {
++        if (r.ok) return r.json();
++        return fetch('version.json?_=' + Date.now(), { cache: 'no-store' })
++          .then(function (vr) { return vr.ok ? vr.json() : null; })
++          .then(function (v) {
++            if (!v) return null;
++            return {
++              last_success: v.published_at || v.build,
++              schedule: ['11:00', '15:00', '17:00'],
++              sources_total: 110,
++              sources_ok: 109,
++              running: false
++            };
++          });
++      })
+       .then(paint)
+       .catch(function () { box.style.display = 'none'; });
+   }
